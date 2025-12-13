@@ -90,8 +90,22 @@ st.markdown("""
     .user-header { font-size: 1.2em; color: #2c3e50; font-weight: bold; text-align: right; }
 
     /* פוטר */
-    .footer { margin-top: 100px; padding: 40px 20px; border-top: 1px solid #e9ecef; text-align: center !important; background: #ffffff; color: #7f8c8d; }
+.footer { 
+        margin-top: 100px; 
+        padding: 40px 20px; 
+        border-top: 1px solid #e9ecef; 
+        background: #ffffff; 
+        color: #7f8c8d; 
+        text-align: center !important; 
+        display: block !important;
+    }
     
+    /* הפקודה הזו מכריחה את הטקסטים בתוך הפוטר להתמרכז למרות ה-RTL הכללי */
+    .footer p {
+        text-align: center !important;
+        width: 100%;
+    }
+                
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
 </style>

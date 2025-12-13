@@ -3,48 +3,30 @@ import mysql.connector
 import pandas as pd
 import time
 import requests
-import urllib3
 import numpy as np
 import graphviz 
 import plotly.express as px
-import warnings 
-import bcrypt # ספרייה לאבטחת סיסמאות
+import bcrypt
+import re
+import json
+from io import StringIO
 from datetime import datetime, timedelta
-
-# --- השתקת אזהרות ---
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-# משתיק את האזהרה המציקה של פנדס
-warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
+from requests.exceptions import RequestException, Timeout
 
 # --- הגדרות דף ---
 st.set_page_config(page_title="InvestWise", layout="wide", page_icon="📈")
 
-# --- הזרקת CSS (עיצוב Light Mode נקי) ---
+# --- הזרקת CSS (עיצוב Light Mode + רספונסיביות + RTL) ---
 st.markdown("""
 <style>
-    /* הגדרת כיוון כללית לכל האפליקציה */
-    .stApp { 
-        direction: rtl; 
-        text-align: right; 
-        background-color: #f8f9fa; 
-        color: #2c3e50; 
-    }
-    
-    /* יישור כפוי לימין לכל סוגי הטקסטים והכותרות */
-    p, h1, h2, h3, h4, h5, h6, span, div, label {
-        text-align: right !important;
-        font-family: 'Heebo', sans-serif !important;
-    }
+    /* הגדרת כיוון כללית ויישור לימין */
+    .stApp { direction: rtl; text-align: right; background-color: #f8f9fa; color: #2c3e50; }
+    p, h1, h2, h3, h4, h5, h6, span, div, label { text-align: right !important; font-family: 'Heebo', sans-serif !important; }
+    .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"] { direction: rtl; text-align: right; }
 
-    /* תיקון ספציפי לקלטים (Inputs) שנוטים לברוח שמאלה */
-    .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"] {
-        direction: rtl;
-        text-align: right;
-    }
-    
-    /* Hero */
+    /* Hero Section */
     .hero-title {
-        text-align: center !important; /* הכותרת הראשית נשארת במרכז */
+        text-align: center !important;
         background: -webkit-linear-gradient(45deg, #6c418c, #9b59b6);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
@@ -55,7 +37,7 @@ st.markdown("""
     }
     .hero-subtitle { text-align: center !important; color: #7f8c8d; font-size: 1.4em; font-weight: 400; margin-top: 5px; margin-bottom: 50px; }
 
-    /* כותרת מוקטנת לדשבורד */
+    /* Dashboard Title */
     .dashboard-title {
         text-align: center !important;
         background: -webkit-linear-gradient(45deg, #6c418c, #9b59b6);
@@ -66,9 +48,9 @@ st.markdown("""
         margin-bottom: 20px;
     }
 
-    /* כרטיסים */
+    /* Cards & Metrics */
     div[data-testid="stMetric"] { background-color: #ffffff; border: 1px solid #e9ecef; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.03); text-align: center !important; }
-    div[data-testid="stMetricValue"] { color: #6c418c; direction: ltr; } /* מספרים עדיף שישארו LTR כדי לא להתהפך */
+    div[data-testid="stMetricValue"] { color: #6c418c; direction: ltr; }
     
     .news-card { background-color: white; padding: 20px; border-radius: 12px; border-right: 5px solid #6c418c; border: 1px solid #e9ecef; box-shadow: 0 2px 8px rgba(0,0,0,0.05); height: 100%; display: flex; flex-direction: column; justify-content: space-between; }
     .news-title { font-weight: 700; font-size: 1.1em; color: #2c3e50; margin-bottom: 10px; direction: rtl; text-align: right; }
@@ -78,40 +60,36 @@ st.markdown("""
     .info-card { background-color: #ffffff; padding: 30px; border-radius: 15px; border: 1px solid #e9ecef; box-shadow: 0 5px 15px rgba(0,0,0,0.03); height: 100%; text-align: right; }
     .info-card:hover { transform: translateY(-5px); border-bottom: 4px solid #6c418c; }
     
-    /* כפתורים */
+    /* Buttons */
     .stButton>button { background-color: #6c418c; color: white; border-radius: 10px; border: none; width: 100%; font-weight: 600; padding: 12px 20px; box-shadow: 0 4px 6px rgba(108, 65, 140, 0.2); }
     .stButton>button:hover { background-color: #512e6b; }
 
-    /* הסתרת אלמנטים */
+    /* Hide Elements */
     [data-testid="stExpanderToggleIcon"] { display: none; }
     .streamlit-expanderHeader { background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; color: #6c418c; font-weight: bold; }
     
-    /* סרגל עליון אישי */
-    .user-header { font-size: 1.2em; color: #2c3e50; font-weight: bold; text-align: right; }
-
-    /* פוטר */
-.footer { 
-        margin-top: 100px; 
-        padding: 40px 20px; 
-        border-top: 1px solid #e9ecef; 
-        background: #ffffff; 
-        color: #7f8c8d; 
-        text-align: center !important; 
-        display: block !important;
-    }
+    /* Footer */
+    .footer { margin-top: 100px; padding: 40px 20px; border-top: 1px solid #e9ecef; background: #ffffff; color: #7f8c8d; text-align: center !important; display: block !important; }
+    .footer p { text-align: center !important; width: 100%; }
     
-    /* הפקודה הזו מכריחה את הטקסטים בתוך הפוטר להתמרכז למרות ה-RTL הכללי */
-    .footer p {
-        text-align: center !important;
-        width: 100%;
+    /* Status Badge */
+    .status-badge { font-size: 0.8em; padding: 2px 8px; border-radius: 4px; display: inline-block; margin-bottom: 5px; }
+    .status-live { background-color: #d4edda; color: #155724; }
+    .status-cached { background-color: #fff3cd; color: #856404; }
+
+    /* Mobile Adjustments */
+    @media (max-width: 768px) {
+        .hero-title { font-size: 2.5em !important; }
+        .hero-subtitle { font-size: 1.1em !important; margin-bottom: 30px; }
+        .dashboard-title { font-size: 2em !important; }
+        div[data-testid="stMetric"] { padding: 10px !important; margin-bottom: 10px; }
+        .info-card { padding: 15px; margin-bottom: 10px; }
+        .stButton>button { padding: 8px 10px; font-size: 0.9em; }
     }
-                
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-# --- הגדרת תיקי השקעות (Portfolios) ---
+# --- קבועים ---
 PORTFOLIOS = {
     "Conservative": { "AGG": 0.60, "VNQ": 0.20, "^GSPC": 0.20 },
     "Balanced": { "^GSPC": 0.50, "VNQ": 0.20, "EIS": 0.15, "AGG": 0.15 },
@@ -127,32 +105,107 @@ ASSET_NAMES = {
     "AGG": "אג\"ח ממשלתי (סולידי)"
 }
 
-# --- חיבור לדאטה בייס (Production) ---
+# --- חיבור לדאטה בייס ---
 def init_connection():
-    # use_pure=True פותר את בעיית ה-DLL בווינדוס ומבטיח תאימות לענן
     return mysql.connector.connect(**st.secrets["mysql"], use_pure=True)
 
-# --- פונקציות עזר לדף הבית ---
+# --- ולידציה ---
+def validate_email(email):
+    return re.match(r"[^@]+@[^@]+\.[^@]+", email)
+
+def validate_password(password):
+    # מינימום 8 תווים, אות אחת לפחות, ספרה אחת לפחות
+    return re.match(r"^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d@$!%*#?&]{8,}$", password)
+
+def validate_username(username):
+    return re.match(r"^[a-zA-Z0-9_]+$", username)
+
+# --- ניהול Cache (LKG - Last Known Good) ---
+def save_lkg_to_db(key, data):
+    """שומר את המידע העדכני ביותר בטבלת הגיבוי בדאטה-בייס"""
+    try:
+        conn = init_connection()
+        cursor = conn.cursor()
+        
+        # המרה ל-JSON (אם זה DataFrame משתמשים בפונקציה ייעודית)
+        if isinstance(data, pd.DataFrame):
+            payload = data.to_json(orient='split', date_format='iso')
+        else:
+            payload = json.dumps(data)
+            
+        sql = """
+            INSERT INTO market_cache (cache_key, data_payload) 
+            VALUES (%s, %s) 
+            ON DUPLICATE KEY UPDATE data_payload = VALUES(data_payload), updated_at = NOW()
+        """
+        cursor.execute(sql, (key, payload))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"LKG Save Warning: {e}")
+
+def load_lkg_from_db(key, is_dataframe=False):
+    """טוען מידע מטבלת הגיבוי אם הרשת נפלה"""
+    try:
+        conn = init_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT data_payload FROM market_cache WHERE cache_key = %s", (key,))
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            payload = result[0]
+            if is_dataframe:
+                return pd.read_json(StringIO(payload), orient='split')
+            else:
+                return json.loads(payload)
+    except Exception as e:
+        print(f"LKG Load Warning: {e}")
+    return None
+
+# --- שליפת נתונים עם מנגנון שרידות ---
 @st.cache_data(ttl=600)
 def get_current_prices():
+    """מושך מחירים. מנסה יאהו -> אם נכשל מנסה DB -> אם נכשל מחזיר ברירת מחדל"""
     headers = {'User-Agent': 'Mozilla/5.0'}
-    prices = {"^GSPC": 0, "BTC": 0, "VNQ": 0, "IXIC": 0}
     tickers = {
         "^GSPC": "https://query1.finance.yahoo.com/v8/finance/chart/^GSPC?interval=1d&range=1d",
         "BTC": "https://query1.finance.yahoo.com/v8/finance/chart/BTC-USD?interval=1d&range=1d",
         "VNQ": "https://query1.finance.yahoo.com/v8/finance/chart/VNQ?interval=1d&range=1d", 
         "IXIC": "https://query1.finance.yahoo.com/v8/finance/chart/^IXIC?interval=1d&range=1d"
     }
-    for key, url in tickers.items():
-        try:
-            r = requests.get(url, headers=headers, verify=False, timeout=5)
+    
+    prices = {}
+    is_live = True
+    
+    try:
+        for key, url in tickers.items():
+            r = requests.get(url, headers=headers, timeout=3) # Timeout קצר
+            r.raise_for_status()
             data = r.json()
             prices[key] = data['chart']['result'][0]['meta']['regularMarketPrice']
-        except: pass
-    return prices
+        
+        # הצלחה - שומרים ל-LKG
+        save_lkg_to_db("current_prices", prices)
+        
+    except (RequestException, Timeout, ValueError):
+        # כישלון - מנסים לטעון LKG
+        is_live = False
+        cached_prices = load_lkg_from_db("current_prices")
+        if cached_prices:
+            prices = cached_prices
+        else:
+            # Fallback אחרון למניעת קריסה
+            prices = {"^GSPC": 0, "BTC": 0, "VNQ": 0, "IXIC": 0}
+
+    return prices, is_live
 
 @st.cache_data(ttl=3600)
 def get_historical_data_for_chart():
+    """מושך היסטוריה לגרף. מנגנון LKG מלא"""
+    is_live = True
+    df_combined = pd.DataFrame()
+
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
         tickers_config = {
@@ -160,35 +213,47 @@ def get_historical_data_for_chart():
             "קריפטו (BTC)": "https://query1.finance.yahoo.com/v8/finance/chart/BTC-USD?interval=1mo&range=5y",
             "נדל\"ן (VNQ)": "https://query1.finance.yahoo.com/v8/finance/chart/VNQ?interval=1mo&range=5y"
         }
-        df_combined = pd.DataFrame()
+        
         for name, url in tickers_config.items():
-            r = requests.get(url, headers=headers, verify=False, timeout=5)
+            r = requests.get(url, headers=headers, timeout=5)
+            r.raise_for_status()
             data = r.json()
             timestamps = data['chart']['result'][0]['timestamp']
             prices = data['chart']['result'][0]['indicators']['quote'][0]['close']
             dates = [datetime.fromtimestamp(ts) for ts in timestamps]
             df_temp = pd.DataFrame({'Date': dates, name: prices})
             df_temp.set_index('Date', inplace=True)
+            
+            # נירמול לאחוזים
             start_price = df_temp[name].iloc[0]
             df_temp[name] = ((df_temp[name] / start_price) - 1) * 100
+            
             if df_combined.empty: df_combined = df_temp
             else: df_combined = df_combined.join(df_temp, how='outer')
-        return df_combined.ffill().dropna()
-    except:
-        dates = pd.date_range(end=datetime.today(), periods=60, freq='ME')
-        df_backup = pd.DataFrame(index=dates)
-        df_backup["S&P 500"] = np.linspace(0, 60, 60) + np.random.normal(0, 2, 60)
-        df_backup["קריפטו (BTC)"] = np.linspace(0, 200, 60) + np.random.normal(0, 15, 60)
-        df_backup["נדל\"ן (VNQ)"] = np.linspace(0, 25, 60) + np.random.normal(0, 3, 60)
-        return df_backup
+            
+        df_final = df_combined.ffill().dropna()
+        save_lkg_to_db("history_chart", df_final)
+        return df_final, True
+
+    except Exception:
+        is_live = False
+        cached_df = load_lkg_from_db("history_chart", is_dataframe=True)
+        if cached_df is not None:
+            return cached_df, False
+        
+        # Fallback בסיסי כדי שהגרף יוצג (אפילו אם ריק)
+        dates = pd.date_range(end=datetime.today(), periods=10, freq='ME')
+        return pd.DataFrame(index=dates, columns=["S&P 500", "קריפטו (BTC)", "נדל\"ן (VNQ)"]).fillna(0), False
 
 @st.cache_data(ttl=1800)
 def get_latest_news():
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    is_live = True
     news_list = []
     try:
+        headers = {'User-Agent': 'Mozilla/5.0'}
         url = "https://query2.finance.yahoo.com/v1/finance/search?q=^GSPC&newsCount=3"
-        r = requests.get(url, headers=headers, verify=False, timeout=5)
+        r = requests.get(url, headers=headers, timeout=5)
+        r.raise_for_status()
         data = r.json()
         if 'news' in data:
             for item in data['news'][:3]:
@@ -198,22 +263,29 @@ def get_latest_news():
                     'publisher': item.get('publisher', 'Yahoo Finance'),
                     'date': datetime.fromtimestamp(item.get('providerPublishTime', 0)).strftime('%d/%m %H:%M')
                 })
-        return news_list
-    except: return []
+        save_lkg_to_db("news_list", news_list)
+        return news_list, True
+    except Exception:
+        cached_news = load_lkg_from_db("news_list")
+        return (cached_news if cached_news else []), False
 
-# --- מנוע חישוב משוקלל לתיק ---
+# --- מנוע חישוב ---
 @st.cache_data(ttl=3600)
 def calculate_portfolio_stats(portfolio_mix):
+    # כאן משתמשים בנתונים סטטיסטיים כלליים אם נכשלים, אין צורך ב-DB כבד לזה
     headers = {'User-Agent': 'Mozilla/5.0'}
     total_avg_win = 0
     total_avg_loss = 0
     total_p_win = 0
     valid_assets = 0
     
+    fallback_stats = {"p_win": 0.65, "avg_win": 0.15, "avg_loss": -0.07}
+
     for ticker, weight in portfolio_mix.items():
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1mo&range=10y"
         try:
-            r = requests.get(url, headers=headers, verify=False, timeout=3)
+            r = requests.get(url, headers=headers, timeout=3)
+            r.raise_for_status()
             data = r.json()
             prices = data['chart']['result'][0]['indicators']['quote'][0]['close']
             yearly_returns = []
@@ -232,9 +304,15 @@ def calculate_portfolio_stats(portfolio_mix):
                 total_avg_win += avg_win * weight
                 total_avg_loss += avg_loss * weight
                 valid_assets += 1
-        except: continue
+        except Exception:
+            total_p_win += fallback_stats["p_win"] * weight
+            total_avg_win += fallback_stats["avg_win"] * weight
+            total_avg_loss += fallback_stats["avg_loss"] * weight
+            valid_assets += 1
 
-    if valid_assets == 0: return {"p_win": 0.7, "p_loss": 0.3, "avg_win": 0.12, "avg_loss": -0.05}
+    if valid_assets == 0: 
+        return {"p_win": 0.7, "p_loss": 0.3, "avg_win": 0.12, "avg_loss": -0.05}
+    
     return {"p_win": total_p_win, "p_loss": 1 - total_p_win, "avg_win": total_avg_win, "avg_loss": total_avg_loss}
 
 def generate_decision_tree_portfolio(amount, portfolio_name, stats):
@@ -272,13 +350,16 @@ def save_simulation_db(user_id, amount, risk, field, net_ev, mode, years):
     try:
         conn = init_connection()
         cursor = conn.cursor()
+        # SQL Injection Prevention: שימוש בפרמטרים
         sql = "INSERT INTO investments (user_id, amount, risk_level, field_chosen, expected_net_value, selection_mode, investment_years) VALUES (%s, %s, %s, %s, %s, %s, %s)"
         cursor.execute(sql, (user_id, amount, risk, field, net_ev, mode, years))
         conn.commit()
         conn.close()
-    except Exception as e: print(f"DB Error: {e}")
+    except Exception as e: 
+        st.error("שגיאה בשמירת הנתונים")
+        print(f"DB Error: {e}")
 
-# --- ניהול משתמשים (כולל אבטחה והצפנה) ---
+# --- ניהול משתמשים ---
 def login_user(username, password):
     try:
         conn = init_connection()
@@ -288,7 +369,6 @@ def login_user(username, password):
         user = cursor.fetchone()
         conn.close()
         
-        # בדיקת סיסמה מוצפנת + יצירת שם מלא לתצוגה
         if user and bcrypt.checkpw(password.encode('utf-8'), user['password'].encode('utf-8')):
             user['full_name'] = f"{user['first_name']} {user['last_name']}"
             return user
@@ -302,13 +382,11 @@ def register_user(first_name, last_name, email, username, password):
         conn = init_connection()
         cursor = conn.cursor()
         
-        # בדיקה האם המשתמש או האימייל תפוסים
         cursor.execute("SELECT * FROM users WHERE username = %s OR email = %s", (username, email))
         if cursor.fetchone():
             conn.close()
             return False, "שם המשתמש או האימייל כבר תפוסים במערכת"
         
-        # הצפנת סיסמה
         hashed_pw = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
         
         sql = "INSERT INTO users (first_name, last_name, email, username, password) VALUES (%s, %s, %s, %s, %s)"
@@ -319,6 +397,14 @@ def register_user(first_name, last_name, email, username, password):
         return True, "המשתמש נוצר בהצלחה! ניתן להתחבר."
     except Exception as e: 
         return False, f"שגיאה: {e}"
+
+# --- UI Helper ---
+def display_data_status(is_live):
+    if not is_live:
+        st.markdown('<span class="status-badge status-cached">⚠️ מוצג מידע שמור (עדכון חי לא זמין כרגע)</span>', unsafe_allow_html=True)
+    else:
+        # אפשר להציג אינדיקטור ירוק או לא להציג כלום
+        pass
 
 # --- ניווט ---
 if 'page' not in st.session_state: st.session_state['page'] = 'home'
@@ -335,22 +421,33 @@ def home_page():
         with c1:
             if st.button("🔑 כניסה", width="stretch", key="home_login"): go_to_login(); st.rerun()
         with c2:
-            if st.button("🚀 הירשמו והתחילו ניתוח תיק חינם ", width="stretch", key="home_reg"): go_to_register(); st.rerun()
+            if st.button("🚀 הירשמו", width="stretch", key="home_reg"): go_to_register(); st.rerun()
 
     st.markdown('<div class="hero-title">InvestWise</div>', unsafe_allow_html=True)
     st.markdown('<div class="hero-subtitle">הפכו את קבלת ההחלטות הפיננסיות לפשוטה וחכמה</div>', unsafe_allow_html=True)
     
-    prices = get_current_prices()
+    prices, is_live_prices = get_current_prices()
+    display_data_status(is_live_prices)
+
     st.write("---")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("מדד S&P 500", f"${prices['^GSPC']:,.2f}")
-    m2.metric("ביטקוין (BTC)", f"${prices['BTC']:,.0f}")
-    m3.metric("מדד נדל\"ן (VNQ)", f"${prices['VNQ']:,.2f}")
-    m4.metric("מדד נאסד\"ק", f"${prices['IXIC']:,.2f}")
+    cols = st.columns(4)
+    metrics_data = [
+        ("מדד S&P 500", f"${prices.get('^GSPC', 0):,.2f}"),
+        ("ביטקוין (BTC)", f"${prices.get('BTC', 0):,.0f}"),
+        ("מדד נדל\"ן (VNQ)", f"${prices.get('VNQ', 0):,.2f}"),
+        ("מדד נאסד\"ק", f"${prices.get('IXIC', 0):,.2f}")
+    ]
+    
+    for i, col in enumerate(cols):
+        col.metric(metrics_data[i][0], metrics_data[i][1])
+        
     st.write("---")
 
     st.subheader("📰 עדכונים חמים מהשווקים")
-    news_items = get_latest_news()
+    news_items, is_live_news = get_latest_news()
+    if not is_live_news and news_items:
+        st.caption("חדשות שמורות (לא התקבלו עדכונים חדשים)")
+    
     if news_items:
         cols = st.columns(3)
         for i, item in enumerate(news_items):
@@ -364,7 +461,8 @@ def home_page():
                     <a href="{item['link']}" target="_blank" class="news-link">לקריאת הכתבה ⬅</a>
                 </div>
                 """, unsafe_allow_html=True)
-    else: st.info("טוען חדשות...")
+    else: 
+        st.info("לא נמצאו עדכונים זמינים.")
 
     st.write("---")
     
@@ -379,7 +477,9 @@ def home_page():
 
     with chart_col:
         st.markdown("##### 📊 השוואת תשואות (5 שנים אחרונות - באחוזים)")
-        chart_data = get_historical_data_for_chart()
+        chart_data, is_live_chart = get_historical_data_for_chart()
+        if not is_live_chart:
+            st.caption("⚠️ מוצגים נתונים היסטוריים שמורים")
         st.line_chart(chart_data, color=["#6c418c", "#f1c40f", "#27ae60"])
 
     st.write("---")
@@ -409,14 +509,14 @@ def home_page():
     </div>
     """, unsafe_allow_html=True)
 
-# --- דפים משניים (לוגין והרשמה מעודכנים) ---
+# --- דפים משניים ---
 def login_page():
     c1, c2, c3 = st.columns([1,1,1])
     with c2:
         st.markdown("<br><br><h1 style='text-align:center;'>👋 ברוכים השבים</h1>", unsafe_allow_html=True)
         with st.form("login_form"):
             username = st.text_input("שם משתמש")
-            password = st.text_input("סיסמה", type="password")
+            password = st.text_input("סיסמה", type="password", placeholder="הזן סיסמה כאן")
             st.write("")
             if st.form_submit_button("התחבר עכשיו", width="stretch"): 
                 user = login_user(username, password)
@@ -425,6 +525,8 @@ def login_page():
                     st.session_state['user_info'] = user
                     st.success("התחברת בהצלחה!"); time.sleep(1); st.rerun()
                 else: st.error("שם משתמש או סיסמה שגויים")
+        
+        st.markdown("<p style='text-align:center; font-size:0.9em; color:#7f8c8d; cursor:pointer;'>שכחת סיסמה?</p>", unsafe_allow_html=True)
         st.write("")
         if st.button("חזרה לדף הבית", width="stretch", key="login_back"): go_to_home(); st.rerun()
 
@@ -433,7 +535,6 @@ def register_page():
     with c2:
         st.markdown("<br><br><h1 style='text-align:center;'>🚀 יצירת חשבון</h1>", unsafe_allow_html=True)
         with st.form("register_form"):
-            # פיצול לשתי עמודות עבור השם
             col_fname, col_lname = st.columns(2)
             with col_fname:
                 first_name = st.text_input("שם פרטי")
@@ -442,37 +543,40 @@ def register_page():
             
             email = st.text_input("אימייל")
             new_user = st.text_input("שם משתמש (באנגלית)")
-            new_pass = st.text_input("סיסמה", type="password")
+            new_pass = st.text_input("סיסמה", type="password", help="מינימום 8 תווים, כולל אות וספרה")
             
             st.write("")
-            if st.form_submit_button("צור חשבון", width="stretch"):
-                # שליחת כל הפרטים לפונקציה החדשה
-                if first_name and last_name and email and new_user and new_pass:
+            if st.form_submit_button("צור חשבון", width="stretch"): 
+                if not (first_name and last_name and email and new_user and new_pass):
+                    st.warning("נא למלא את כל שדות החובה")
+                elif not validate_email(email):
+                    st.error("כתובת אימייל לא תקינה")
+                elif not validate_username(new_user):
+                    st.error("שם משתמש חייב להכיל רק אותיות באנגלית ומספרים")
+                elif not validate_password(new_pass):
+                    st.error("הסיסמה חייבת להיות באורך 8 תווים לפחות ולכלול אות וספרה")
+                else:
                     res, msg = register_user(first_name, last_name, email, new_user, new_pass)
                     if res: st.success(msg); time.sleep(1); go_to_login(); st.rerun()
                     else: st.error(msg)
-                else: st.warning("נא למלא את כל שדות החובה")
+                    
         st.write("")
         if st.button("חזרה לדף הבית", width="stretch", key="reg_back"): go_to_home(); st.rerun()
 
-# --- דף האפליקציה (ללא Sidebar) ---
+# --- דף האפליקציה ---
 def app_dashboard():
     user = st.session_state['user_info']
     
-    # בר עליון נקי
     c_right, c_left = st.columns([8, 1])
     with c_right:
         st.write(f"#### 👋 שלום, {user['full_name']}")
     with c_left:
-        # כפתור יציאה
         if st.button("יציאה", key="top_logout_btn"): 
             st.session_state['logged_in'] = False
             go_to_home()
             st.rerun()
     
     st.divider()
-
-    # כותרת מוקטנת
     st.markdown('<div class="dashboard-title">InvestWise</div>', unsafe_allow_html=True)
 
     tab1, tab2 = st.tabs(["🚀 בניית תיק השקעות", "📊 הפרופיל שלי"])
@@ -511,7 +615,6 @@ def app_dashboard():
         selected_mix = None
         portfolio_name = ""
         
-        # כפתורים
         if col_auto.button("🤖 בנה לי תיק אוטומטית", type="primary", width="stretch", key="btn_auto"):
             st.session_state['manual_mode'] = False 
             st.session_state['analysis_done'] = True
@@ -584,7 +687,9 @@ def app_dashboard():
     with tab2:
         st.header("ההיסטוריה שלי")
         conn = init_connection()
-        df = pd.read_sql(f"SELECT timestamp as 'תאריך', amount as 'סכום', investment_years as 'שנים', risk_level as 'סיכון', field_chosen as 'תיק נבחר', expected_net_value as 'שווי חזוי', selection_mode as 'מצב' FROM investments WHERE user_id={user['id']} ORDER BY timestamp DESC", conn)
+        # שליפה מוגנת ב-SQL Injection ע"י שימוש ב-params ב-read_sql
+        query = "SELECT timestamp as 'תאריך', amount as 'סכום', investment_years as 'שנים', risk_level as 'סיכון', field_chosen as 'תיק נבחר', expected_net_value as 'שווי חזוי', selection_mode as 'מצב' FROM investments WHERE user_id=%(uid)s ORDER BY timestamp DESC"
+        df = pd.read_sql(query, conn, params={"uid": user['id']})
         st.dataframe(df, width="stretch")
         conn.close()
 

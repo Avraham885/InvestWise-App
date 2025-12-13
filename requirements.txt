@@ -1,0 +1,9 @@
+streamlit
+mysql-connector-python
+pandas
+requests
+urllib3
+numpy
+graphviz
+plotly
+bcrypt

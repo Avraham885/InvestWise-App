@@ -512,7 +512,7 @@ def home_page():
         st.write("אנחנו מנגישים לכם כלי אנליטי שמבוסס על **עץ החלטות** וסטטיסטיקה.")
 
     with chart_col:
-        st.markdown("##### 📊 השוואת תשואות (5 שנים אחרונות - באחוזים)")
+        st.markdown("##### 📊 השוואת תשואות מנורמלות (5 שנים אחרונות)")
         chart_data, is_live_chart = get_historical_data_for_chart()
         if not is_live_chart:
             st.caption("⚠️ מוצגים נתונים היסטוריים שמורים")
@@ -579,11 +579,11 @@ def login_page():
 
         else:
             # === טופס איפוס סיסמה ===
-            st.warning("🔒 איפוס סיסמה מאובטח")
+            st.warning("🔒 איפוס סיסמה")
             with st.form("reset_form"):
                 st.caption("אנא הזן את פרטי הזיהוי שלך לאימות:")
-                r_username = st.text_input("שם משתמש")
-                r_email = st.text_input("אימייל (שאיתו נרשמת)")
+                r_username = st.text_input("שם המשתמש שאיתו נרשמת")
+                r_email = st.text_input("האימייל שאיתו נרשמת")
                 new_pass = st.text_input("סיסמה חדשה", type="password")
                 
                 st.write("")
@@ -695,7 +695,7 @@ def app_dashboard():
         if col_auto.button("🤖 בנה לי תיק אוטומטית", type="primary", width="stretch", key="btn_auto"):
             # 1. חישובים
             selected_mix = PORTFOLIOS[derived_risk].copy()
-            portfolio_name = f"תיק {derived_risk} (אוטומטי)"
+            portfolio_name = f"תיק {derived_risk}"
             
             # איזון VNQ אם הסכום נמוך
             if amount < 100000 and "VNQ" in selected_mix:
@@ -727,7 +727,7 @@ def app_dashboard():
                 st.session_state['manual_mode'] = False
 
         # === אפשרות 2: כפתור ידני ===
-        if col_manual.button("🖐️ אני רוצה לבחור נכס בודד (ידני)", width="stretch", key="btn_manual"):
+        if col_manual.button("🖐️ אני רוצה לבחור נכס בודד", width="stretch", key="btn_manual"):
             st.session_state['manual_mode'] = True
             st.session_state['display_results'] = None # מנקים תוצאות קודמות
 
@@ -827,7 +827,7 @@ def app_dashboard():
             )
 
             st.divider()
-            st.subheader("🔍 ניתוח מעמיק - שחזור השקעה")
+            st.subheader("🔍 שחזור השקעה")
             
             # יצירת רשימת בחירה נוחה למשתמש
             df['label'] = df.apply(lambda x: f"{x['timestamp']} | ₪{x['amount']:,} | {x['field_chosen']}", axis=1)
@@ -865,7 +865,7 @@ def app_dashboard():
                      st.graphviz_chart(tree)
                      st.caption(f"הנתונים נכונים לרגע ביצוע ההשקעה ({row['timestamp']})")
             else:
-                st.warning("להשקעה זו אין נתונים מורחבים שמורים (נוצרה לפני שדרוג המערכת).")
+                st.warning("השקעה זו נוצרה לפני שדרוג המערכת ואין לה נתונים שמורים")
 
 # --- נתב ראשי ---
 if st.session_state['logged_in']: app_dashboard()

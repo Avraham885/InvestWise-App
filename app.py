@@ -346,13 +346,22 @@ def generate_decision_tree_portfolio(amount, portfolio_name, stats):
 
     return dot, expected_val
 
-def save_simulation_db(user_id, amount, risk, field, net_ev, mode, years):
+def save_simulation_db(user_id, amount, risk, field, net_ev, mode, years, portfolio_mix, stats):
     try:
         conn = init_connection()
         cursor = conn.cursor()
-        # SQL Injection Prevention: שימוש בפרמטרים
-        sql = "INSERT INTO investments (user_id, amount, risk_level, field_chosen, expected_net_value, selection_mode, investment_years) VALUES (%s, %s, %s, %s, %s, %s, %s)"
-        cursor.execute(sql, (user_id, amount, risk, field, net_ev, mode, years))
+        
+        # המרה ל-JSON string כדי לשמור בדאטה-בייס
+        portfolio_json = json.dumps(portfolio_mix)
+        stats_json = json.dumps(stats)
+        
+        # שאילתה מעודכנת עם העמודות החדשות
+        sql = """
+            INSERT INTO investments 
+            (user_id, amount, risk_level, field_chosen, expected_net_value, selection_mode, investment_years, portfolio_composition, simulation_stats) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        cursor.execute(sql, (user_id, amount, risk, field, net_ev, mode, years, portfolio_json, stats_json))
         conn.commit()
         conn.close()
     except Exception as e: 
@@ -651,7 +660,7 @@ def app_dashboard():
     tab1, tab2 = st.tabs(["🚀 בניית תיק השקעות", "📊 הפרופיל שלי"])
 
     with tab1:
-        st.write("### המנוע החכם - בניית תיק מותאם אישית")
+        st.write("###  בניית תיק מותאם אישית")
         
         c1, c2, c3 = st.columns([1, 1, 1])
         with c1:
@@ -689,14 +698,14 @@ def app_dashboard():
             st.session_state['analysis_done'] = True
             st.session_state['current_mode'] = "auto"
             
-        if col_manual.button("🖐️ אני רוצה לבחור נכס בודד (ידני)", width="stretch", key="btn_manual"):
+        if col_manual.button("🖐️ אני רוצה לבחור נכס בודד", width="stretch", key="btn_manual"):
             st.session_state['manual_mode'] = True
             st.session_state['analysis_done'] = False
             st.session_state['current_mode'] = "manual"
         
         if st.session_state.get('current_mode') == 'auto':
             selected_mix = PORTFOLIOS[derived_risk].copy()
-            portfolio_name = f"תיק {derived_risk} (אוטומטי)"
+            portfolio_name = f"תיק {derived_risk}"
             if amount < 100000 and "VNQ" in selected_mix:
                 vnq_weight = selected_mix.pop("VNQ")
                 if "^GSPC" in selected_mix: selected_mix["^GSPC"] += vnq_weight
@@ -730,7 +739,7 @@ def app_dashboard():
                 expected_future_val = (future_value_optimistic * stats['p_win']) + (future_value_pessimistic * stats['p_loss'])
                 total_profit = expected_future_val - amount
                 annualized_return = ((expected_future_val / amount) ** (1/years)) - 1
-                save_simulation_db(user['id'], amount, derived_risk, portfolio_name, expected_future_val, st.session_state['current_mode'], years)
+                save_simulation_db(user['id'], amount, derived_risk, portfolio_name, expected_future_val, st.session_state['current_mode'], years, selected_mix, stats)
             
             col_visual, col_data = st.columns([1.2, 1])
             with col_data:
@@ -754,13 +763,70 @@ def app_dashboard():
                     st.info("העץ מציג הסתברויות על בסיס 10 שנות היסטוריה.")
 
     with tab2:
-        st.header("ההיסטוריה שלי")
+        st.header("📜 היסטוריית ההמלצות שלי")
         conn = init_connection()
-        # שליפה מוגנת ב-SQL Injection ע"י שימוש ב-params ב-read_sql
-        query = "SELECT timestamp as 'תאריך', amount as 'סכום', investment_years as 'שנים', risk_level as 'סיכון', field_chosen as 'תיק נבחר', expected_net_value as 'שווי חזוי', selection_mode as 'מצב' FROM investments WHERE user_id=%(uid)s ORDER BY timestamp DESC"
+        # שליפת כל המידע כולל ה-JSON
+        query = "SELECT id, timestamp, amount, investment_years, risk_level, field_chosen, expected_net_value, selection_mode, portfolio_composition, simulation_stats FROM investments WHERE user_id=%(uid)s ORDER BY timestamp DESC"
         df = pd.read_sql(query, conn, params={"uid": user['id']})
-        st.dataframe(df, width="stretch")
         conn.close()
+
+        if df.empty:
+            st.info("עדיין אין לך השקעות שמורות. צור את ההשקעה הראשונה בטאב הראשון!")
+        else:
+            # תצוגת טבלה ראשית נקייה
+            st.dataframe(
+                df[['timestamp', 'amount', 'risk_level', 'field_chosen', 'expected_net_value']],
+                column_config={
+                    "timestamp": st.column_config.DatetimeColumn("תאריך", format="DD/MM/YYYY HH:mm"),
+                    "amount": st.column_config.NumberColumn("סכום השקעה", format="₪%d"),
+                    "expected_net_value": st.column_config.NumberColumn("שווי חזוי", format="₪%d"),
+                    "risk_level": "רמת סיכון",
+                    "field_chosen": "שם התיק"
+                },
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.divider()
+            st.subheader("🔍 ניתוח מעמיק - שחזור השקעה")
+            
+            # יצירת רשימת בחירה נוחה למשתמש
+            df['label'] = df.apply(lambda x: f"{x['timestamp']} | ₪{x['amount']:,} | {x['field_chosen']}", axis=1)
+            selected_label = st.selectbox("בחר השקעה מהרשימה כדי לראות את הניתוח המלא שלה:", df['label'])
+            
+            # שליפת השורה הספציפית שנבחרה
+            row = df[df['label'] == selected_label].iloc[0]
+            
+            # בדיקה האם יש מידע מורחב (עבור השקעות ישנות ייתכן שאין)
+            if row['portfolio_composition'] and row['simulation_stats']:
+                # המרת ה-JSON חזרה למילון פייתון
+                # הערה: לפעמים MySQL מחזיר את זה כמילון ולפעמים כטקסט, הקוד הזה מטפל בשניהם
+                p_mix = json.loads(row['portfolio_composition']) if isinstance(row['portfolio_composition'], str) else row['portfolio_composition']
+                p_stats = json.loads(row['simulation_stats']) if isinstance(row['simulation_stats'], str) else row['simulation_stats']
+                
+                # --- שחזור התצוגה הגרפית ---
+                h_col_visual, h_col_data = st.columns([1.2, 1])
+                
+                with h_col_data:
+                    st.markdown("#### 🍰 הרכב התיק שנשמר")
+                    df_pie = pd.DataFrame(list(p_mix.items()), columns=['Ticker', 'Weight'])
+                    df_pie['Asset Name'] = df_pie['Ticker'].map(ASSET_NAMES)
+                    fig = px.pie(df_pie, values='Weight', names='Asset Name', hole=0.4, color_discrete_sequence=px.colors.sequential.RdBu)
+                    fig.update_layout(showlegend=True, height=250, margin=dict(t=0, b=0, l=0, r=0))
+                    st.plotly_chart(fig, width="stretch")
+                    
+                    # נתונים מספריים
+                    roi = ((row['expected_net_value'] / row['amount']) ** (1/row['investment_years'])) - 1
+                    st.success(f"**צפי תשואה שנתית:** {roi*100:.1f}%")
+
+                with h_col_visual:
+                     st.markdown("#### 🌳 עץ ההחלטות (שחזור מלא)")
+                     # שימוש בפונקציה הקיימת שלנו כדי לצייר מחדש את העץ
+                     tree, _ = generate_decision_tree_portfolio(row['amount'], row['field_chosen'], p_stats)
+                     st.graphviz_chart(tree)
+                     st.caption(f"הנתונים נכונים לרגע ביצוע ההשקעה ({row['timestamp']})")
+            else:
+                st.warning("להשקעה זו אין נתונים מורחבים שמורים (נוצרה לפני שדרוג המערכת).")
 
 # --- נתב ראשי ---
 if st.session_state['logged_in']: app_dashboard()

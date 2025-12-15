@@ -359,7 +359,7 @@ def save_simulation_db(user_id, amount, risk, field, net_ev, mode, years):
         st.error("שגיאה בשמירת הנתונים")
         print(f"DB Error: {e}")
 
-# --- ניהול משתמשים ---
+# --- ניהול משתמשים (כולל שכחתי סיסמה) ---
 def login_user(username, password):
     try:
         conn = init_connection()
@@ -396,6 +396,33 @@ def register_user(first_name, last_name, email, username, password):
         conn.close()
         return True, "המשתמש נוצר בהצלחה! ניתן להתחבר."
     except Exception as e: 
+        return False, f"שגיאה: {e}"
+
+def reset_user_password(username, email, new_password):
+    """פונקציה לאיפוס סיסמה"""
+    try:
+        conn = init_connection()
+        cursor = conn.cursor()
+        
+        # 1. בדיקה שהמשתמש קיים והאימייל תואם
+        cursor.execute("SELECT * FROM users WHERE username = %s AND email = %s", (username, email))
+        user = cursor.fetchone()
+        
+        if not user:
+            conn.close()
+            return False, "הפרטים אינם תואמים למשתמש קיים"
+            
+        # 2. הצפנת הסיסמה החדשה
+        hashed_pw = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
+        
+        # 3. עדכון הסיסמה בבסיס הנתונים (user[0] הוא ה-ID)
+        update_query = "UPDATE users SET password = %s WHERE id = %s"
+        cursor.execute(update_query, (hashed_pw.decode('utf-8'), user[0])) 
+        
+        conn.commit()
+        conn.close()
+        return True, "הסיסמה שונתה בהצלחה! עכשיו אפשר להתחבר."
+    except Exception as e:
         return False, f"שגיאה: {e}"
 
 # --- UI Helper ---
@@ -509,26 +536,68 @@ def home_page():
     </div>
     """, unsafe_allow_html=True)
 
-# --- דפים משניים ---
+# --- דפים משניים (לוגין + שכחתי סיסמה) ---
 def login_page():
     c1, c2, c3 = st.columns([1,1,1])
     with c2:
         st.markdown("<br><br><h1 style='text-align:center;'>👋 ברוכים השבים</h1>", unsafe_allow_html=True)
-        with st.form("login_form"):
-            username = st.text_input("שם משתמש")
-            password = st.text_input("סיסמה", type="password", placeholder="הזן סיסמה כאן")
-            st.write("")
-            if st.form_submit_button("התחבר עכשיו", width="stretch"): 
-                user = login_user(username, password)
-                if user:
-                    st.session_state['logged_in'] = True
-                    st.session_state['user_info'] = user
-                    st.success("התחברת בהצלחה!"); time.sleep(1); st.rerun()
-                else: st.error("שם משתמש או סיסמה שגויים")
         
-        st.markdown("<p style='text-align:center; font-size:0.9em; color:#7f8c8d; cursor:pointer;'>שכחת סיסמה?</p>", unsafe_allow_html=True)
-        st.write("")
-        if st.button("חזרה לדף הבית", width="stretch", key="login_back"): go_to_home(); st.rerun()
+        # --- ניהול מצב: האם להציג טופס איפוס או התחברות? ---
+        if 'show_reset' not in st.session_state:
+            st.session_state['show_reset'] = False
+
+        if not st.session_state['show_reset']:
+            # === טופס התחברות רגיל ===
+            with st.form("login_form"):
+                username = st.text_input("שם משתמש")
+                password = st.text_input("סיסמה", type="password")
+                st.write("")
+                if st.form_submit_button("התחבר עכשיו", width="stretch"): 
+                    user = login_user(username, password)
+                    if user:
+                        st.session_state['logged_in'] = True
+                        st.session_state['user_info'] = user
+                        st.success("התחברת בהצלחה!"); time.sleep(1); st.rerun()
+                    else: st.error("שם משתמש או סיסמה שגויים")
+            
+            # כפתור מעבר לאיפוס סיסמה
+            if st.button("שכחתי סיסמה?", key="btn_forgot"):
+                st.session_state['show_reset'] = True
+                st.rerun()
+                
+            st.write("")
+            if st.button("חזרה לדף הבית", width="stretch", key="login_back"): go_to_home(); st.rerun()
+
+        else:
+            # === טופס איפוס סיסמה ===
+            st.warning("🔒 איפוס סיסמה מאובטח")
+            with st.form("reset_form"):
+                st.caption("אנא הזן את פרטי הזיהוי שלך לאימות:")
+                r_username = st.text_input("שם משתמש")
+                r_email = st.text_input("אימייל (שאיתו נרשמת)")
+                new_pass = st.text_input("סיסמה חדשה", type="password")
+                
+                st.write("")
+                if st.form_submit_button("אפס סיסמה", width="stretch"):
+                    if r_username and r_email and new_pass:
+                        if validate_password(new_pass):
+                            res, msg = reset_user_password(r_username, r_email, new_pass)
+                            if res:
+                                st.success(msg)
+                                time.sleep(2)
+                                st.session_state['show_reset'] = False # חזרה ללוגין
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                        else:
+                            st.error("הסיסמה החדשה חייבת להיות באורך 8 תווים לפחות ולכלול אות וספרה")
+                    else:
+                        st.warning("נא למלא את כל השדות")
+
+            # כפתור ביטול וחזרה ללוגין
+            if st.button("חזרה להתחברות", key="btn_cancel_reset"):
+                st.session_state['show_reset'] = False
+                st.rerun()
 
 def register_page():
     c1, c2, c3 = st.columns([1,1,1])

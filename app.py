@@ -660,7 +660,7 @@ def app_dashboard():
     tab1, tab2 = st.tabs(["🚀 בניית תיק השקעות", "📊 הפרופיל שלי"])
 
     with tab1:
-        st.write("###  בניית תיק מותאם אישית")
+        st.write("### המנוע החכם - בניית תיק מותאם אישית")
         
         c1, c2, c3 = st.columns([1, 1, 1])
         with c1:
@@ -686,82 +686,121 @@ def app_dashboard():
         
         col_auto, col_manual = st.columns(2)
         
-        if 'analysis_done' not in st.session_state:
-            st.session_state['analysis_done'] = False
+        # --- ניהול זיכרון (State) לתצוגה בלבד ---
+        # אנחנו נשמור את התוצאות בזיכרון כדי להציג אותן, אבל את השמירה לדאטה-בייס נעשה רק בלחיצה
+        if 'display_results' not in st.session_state:
+            st.session_state['display_results'] = None
         
-        mode = None
-        selected_mix = None
-        portfolio_name = ""
-        
+        # === אפשרות 1: כפתור אוטומטי ===
         if col_auto.button("🤖 בנה לי תיק אוטומטית", type="primary", width="stretch", key="btn_auto"):
-            st.session_state['manual_mode'] = False 
-            st.session_state['analysis_done'] = True
-            st.session_state['current_mode'] = "auto"
-            
-        if col_manual.button("🖐️ אני רוצה לבחור נכס בודד", width="stretch", key="btn_manual"):
-            st.session_state['manual_mode'] = True
-            st.session_state['analysis_done'] = False
-            st.session_state['current_mode'] = "manual"
-        
-        if st.session_state.get('current_mode') == 'auto':
+            # 1. חישובים
             selected_mix = PORTFOLIOS[derived_risk].copy()
-            portfolio_name = f"תיק {derived_risk}"
+            portfolio_name = f"תיק {derived_risk} (אוטומטי)"
+            
+            # איזון VNQ אם הסכום נמוך
             if amount < 100000 and "VNQ" in selected_mix:
                 vnq_weight = selected_mix.pop("VNQ")
                 if "^GSPC" in selected_mix: selected_mix["^GSPC"] += vnq_weight
                 else: selected_mix["^GSPC"] = vnq_weight
 
-        if st.session_state.get('manual_mode'):
-            st.write("### בחירה ידנית")
-            chosen_asset_key = st.selectbox("בחר באיזה אפיק להתמקד:", list(ASSET_NAMES.keys()), format_func=lambda x: ASSET_NAMES[x], key="manual_asset_select")
-            if st.button("נתח את הבחירה שלי", key="btn_analyze_manual", width="stretch"):
-                st.session_state['analysis_done'] = True
-                st.session_state['manual_asset'] = chosen_asset_key
-
-            if st.session_state.get('analysis_done') and st.session_state.get('current_mode') == 'manual':
-                asset = st.session_state.get('manual_asset', chosen_asset_key)
-                selected_mix = {asset: 1.0}
-                portfolio_name = f"תיק {ASSET_NAMES[asset]} (ידני)"
-
-        if st.session_state.get('analysis_done') and selected_mix:
-            st.divider()
-            c_head, c_reset = st.columns([4, 1])
-            c_head.subheader(f"📊 תוצאות הניתוח: {portfolio_name}")
-            if c_reset.button("🔄 התחל מחדש", key="btn_reset"):
-                st.session_state['analysis_done'] = False
-                st.session_state['manual_mode'] = False
-                st.rerun()
-            
             with st.spinner('מנתח נתונים ומחשב תחזיות...'):
                 stats = calculate_portfolio_stats(selected_mix)
+                
+                # חישוב ערכים עתידיים
                 future_value_optimistic = amount * ((1 + stats['avg_win']) ** years)
                 future_value_pessimistic = amount * ((1 + stats['avg_loss']) ** years)
                 expected_future_val = (future_value_optimistic * stats['p_win']) + (future_value_pessimistic * stats['p_loss'])
-                total_profit = expected_future_val - amount
-                annualized_return = ((expected_future_val / amount) ** (1/years)) - 1
-                save_simulation_db(user['id'], amount, derived_risk, portfolio_name, expected_future_val, st.session_state['current_mode'], years, selected_mix, stats)
+                
+                # 2. שמירה לדאטה בייס (קורה פעם אחת בדיוק!)
+                save_simulation_db(user['id'], amount, derived_risk, portfolio_name, expected_future_val, "auto", years, selected_mix, stats)
+                
+                # 3. שמירה לזיכרון לתצוגה
+                st.session_state['display_results'] = {
+                    'mix': selected_mix,
+                    'stats': stats,
+                    'name': portfolio_name,
+                    'ev': expected_future_val,
+                    'years': years,
+                    'amount': amount
+                }
+                # איפוס מצב ידני
+                st.session_state['manual_mode'] = False
+
+        # === אפשרות 2: כפתור ידני ===
+        if col_manual.button("🖐️ אני רוצה לבחור נכס בודד (ידני)", width="stretch", key="btn_manual"):
+            st.session_state['manual_mode'] = True
+            st.session_state['display_results'] = None # מנקים תוצאות קודמות
+
+        # תצוגת הבחירה הידנית
+        if st.session_state.get('manual_mode') and st.session_state['display_results'] is None:
+            st.write("### בחירה ידנית")
+            chosen_asset_key = st.selectbox("בחר באיזה אפיק להתמקד:", list(ASSET_NAMES.keys()), format_func=lambda x: ASSET_NAMES[x], key="manual_asset_select")
+            
+            if st.button("נתח את הבחירה שלי", key="btn_analyze_manual", width="stretch"):
+                # 1. חישובים
+                selected_mix = {chosen_asset_key: 1.0}
+                portfolio_name = f"תיק {ASSET_NAMES[chosen_asset_key]} (ידני)"
+                
+                with st.spinner('מנתח נתונים...'):
+                    stats = calculate_portfolio_stats(selected_mix)
+                    future_value_optimistic = amount * ((1 + stats['avg_win']) ** years)
+                    future_value_pessimistic = amount * ((1 + stats['avg_loss']) ** years)
+                    expected_future_val = (future_value_optimistic * stats['p_win']) + (future_value_pessimistic * stats['p_loss'])
+
+                    # 2. שמירה לדאטה בייס (פעם אחת!)
+                    save_simulation_db(user['id'], amount, derived_risk, portfolio_name, expected_future_val, "manual", years, selected_mix, stats)
+
+                    # 3. שמירה לזיכרון לתצוגה
+                    st.session_state['display_results'] = {
+                        'mix': selected_mix,
+                        'stats': stats,
+                        'name': portfolio_name,
+                        'ev': expected_future_val,
+                        'years': years,
+                        'amount': amount
+                    }
+                    st.session_state['manual_mode'] = False # סוגרים את התפריט הידני אחרי הבחירה
+                    st.rerun()
+
+        # === תצוגת התוצאות (קורא מהזיכרון) ===
+        # החלק הזה רק מציג! הוא לא שומר כלום ל-DB
+        if st.session_state['display_results']:
+            res = st.session_state['display_results']
+            
+            st.divider()
+            c_head, c_reset = st.columns([4, 1])
+            c_head.subheader(f"📊 תוצאות הניתוח: {res['name']}")
+            
+            if c_reset.button("🔄 התחל מחדש", key="btn_reset"):
+                st.session_state['display_results'] = None
+                st.session_state['manual_mode'] = False
+                st.rerun()
             
             col_visual, col_data = st.columns([1.2, 1])
             with col_data:
                 st.markdown("#### 🍰 הרכב התיק")
-                df_pie = pd.DataFrame(list(selected_mix.items()), columns=['Ticker', 'Weight'])
+                df_pie = pd.DataFrame(list(res['mix'].items()), columns=['Ticker', 'Weight'])
                 df_pie['Asset Name'] = df_pie['Ticker'].map(ASSET_NAMES)
                 fig = px.pie(df_pie, values='Weight', names='Asset Name', hole=0.4, color_discrete_sequence=px.colors.sequential.RdBu)
                 fig.update_layout(showlegend=True, height=250, margin=dict(t=0, b=0, l=0, r=0))
                 st.plotly_chart(fig, width="stretch")
+                
                 st.markdown("---")
+                # חישוב תשואה שנתית לתצוגה
+                annualized_return = ((res['ev'] / res['amount']) ** (1/res['years'])) - 1
+                total_profit = res['ev'] - res['amount']
+                
                 st.write(f"**צפי תשואה שנתית ממוצעת:** {annualized_return*100:.1f}%")
-                st.success(f"**שווי מוערך בתום {years} שנים:** ₪{expected_future_val:,.0f}")
+                st.success(f"**שווי מוערך בתום {res['years']} שנים:** ₪{res['ev']:,.0f}")
                 color_txt = "green" if total_profit > 0 else "red"
                 st.markdown(f"רווח משוקלל צפוי: :{color_txt}[**₪{total_profit:,.0f}**]")
 
             with col_visual:
                 with st.expander("🔍 לחץ להצגת ניתוח עץ ההחלטות", expanded=False):
-                    st.caption(f"התרשים מציג את ההתפלגות הסטטיסטית לשנה אחת (מתוך {years}):")
-                    tree_graph, _ = generate_decision_tree_portfolio(amount, portfolio_name, stats)
+                    st.caption(f"התרשים מציג את ההתפלגות הסטטיסטית לשנה אחת (מתוך {res['years']}):")
+                    tree_graph, _ = generate_decision_tree_portfolio(res['amount'], res['name'], res['stats'])
                     st.graphviz_chart(tree_graph)
                     st.info("העץ מציג הסתברויות על בסיס 10 שנות היסטוריה.")
-
     with tab2:
         st.header("📜 היסטוריית ההמלצות שלי")
         conn = init_connection()

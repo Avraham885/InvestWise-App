@@ -430,7 +430,7 @@ def reset_user_password(username, email, new_password):
         
         conn.commit()
         conn.close()
-        return True, "הסיסמה שונתה בהצלחה! עכשיו אפשר להתחבר."
+        return True, "הסיסמה שונתה בהצלחה! עכשיו אפשר להתחבר"
     except Exception as e:
         return False, f"שגיאה: {e}"
 
@@ -457,7 +457,7 @@ def home_page():
         with c1:
             if st.button("🔑 כניסה", width="stretch", key="home_login"): go_to_login(); st.rerun()
         with c2:
-            if st.button("🚀 הירשמו", width="stretch", key="home_reg"): go_to_register(); st.rerun()
+            if st.button("הירשמו", width="stretch", key="home_reg"): go_to_register(); st.rerun()
 
     st.markdown('<div class="hero-title">InvestWise</div>', unsafe_allow_html=True)
     st.markdown('<div class="hero-subtitle">הפכו את קבלת ההחלטות הפיננסיות לפשוטה וחכמה</div>', unsafe_allow_html=True)
@@ -657,7 +657,7 @@ def app_dashboard():
     st.divider()
     st.markdown('<div class="dashboard-title">InvestWise</div>', unsafe_allow_html=True)
 
-    tab1, tab2 = st.tabs(["🚀 בניית תיק השקעות", "📊 הפרופיל שלי"])
+    tab1, tab2 = st.tabs(["בניית תיק השקעות", "📊 הפרופיל שלי"])
 
     with tab1:
         st.write("### המנוע החכם - בניית תיק מותאם אישית")
